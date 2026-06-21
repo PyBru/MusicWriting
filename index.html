@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Listening Notes</title>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getFirestore, collection, addDoc, getDocs, doc, deleteDoc, updateDoc,
+      orderBy, query, serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ── PASTE YOUR FIREBASE CONFIG HERE ──────────────────────────────────────
+  // Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyC_jW1CCTzE3fQROJqdDlsps1IbUMX8b2Y",
+  authDomain: "musicwriting-e38ba.firebaseapp.com",
+  projectId: "musicwriting-e38ba",
+  storageBucket: "musicwriting-e38ba.firebasestorage.app",
+  messagingSenderId: "162629936781",
+  appId: "1:162629936781:web:1e6aa6c1303b1ed332a4c4",
+  measurementId: "G-RJ8T2RV00P"
+};
+    // ─────────────────────────────────────────────────────────────────────────
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+    function youtubeId(url) {
+      if (!url) return null;
+      const m = url.match(/(?:youtu\.be\/|v=|embed\/)([A-Za-z0-9_-]{11})/);
+      return m ? m[1] : (url.length === 11 ? url : null);
+    }
+
+    function spotifyEmbed(url) {
+      if (!url) return null;
+      // Convert open.spotify.com link to embed link
+      return url.replace("open.spotify.com/", "open.spotify.com/embed/");
+    }
+
+    function formatDate(ts) {
+      if (!ts) return "";
+      const d = ts.toDate ? ts.toDate() : new Date(ts);
+      return d.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    }
+
+    // ── state ────────────────────────────────────────────────────────────────
+    let entries     = [];
+    let currentView = "list"; // "list" | "entry" | "new" | "edit"
+    let currentId   = null;
+    let filterArtist = "all";
+    let sortBy       = "date-desc";
+    let editingEntry = null;
+
+    // ── load entries ─────────────────────────────────────────────────────────
+    async function loadEntries() {
+      const q = query(collection(db, "entries"), orderBy("createdAt", "desc"));
+      const snap = await getDocs(q);
+      entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderApp();
+    }
+
+    // ── save entry ───────────────────────────────────────────────────────────
+    async function saveEntry(data) {
+      if (editingEntry) {
+        await updateDoc(doc(db, "entries", editingEntry.id), { ...data, updatedAt: serverTimestamp() });
+      } else {
+        await addDoc(collection(db, "entries"), { ...data, createdAt: serverTimestamp() });
+      }
+      editingEntry = null;
+      await loadEntries();
+      showView("list");
+    }
+
+    async function deleteEntry(id) {
+      if (!confirm("Delete this entry?")) return;
+      await deleteDoc(doc(db, "entries", id));
+      await loadEntries();
+      showView("list");
+    }
+
+    // ── view routing ─────────────────────────────────────────────────────────
+    function showView(view, id) {
+      currentView = view;
+      currentId   = id || null;
+      renderApp();
+    }
+
+    // ── render ───────────────────────────────────────────────────────────────
+    function renderApp() {
+      const root = document.getElementById("app");
+      root.innerHTML = "";
+
+      const nav = buildNav();
+      root.appendChild(nav);
+
+      const main = document.createElement("main");
+      root.appendChild(main);
+
+      if (currentView === "list")  main.appendChild(buildList());
+      if (currentView === "entry") main.appendChild(buildEntry());
+      if (currentView === "new" || currentView === "edit") main.appendChild(buildForm());
+    }
+
+    // ── nav ──────────────────────────────────────────────────────────────────
+    function buildNav() {
+      const nav = el("nav");
+      nav.innerHTML = `
+        <div class="nav-inner">
+          <span class="nav-title" id="nav-home">Listening Notes</span>
+          <button class="btn-new" id="nav-new">+ New Entry</button>
+        </div>`;
+      nav.querySelector("#nav-home").onclick = () => showView("list");
+      nav.querySelector("#nav-new").onclick  = () => { editingEntry = null; showView("new"); };
+      return nav;
+    }
+
+    // ── list view ────────────────────────────────────────────────────────────
+    function buildList() {
+      const wrap = el("div", "view-list");
+
+      // artists for filter
+      const artists = [...new Set(entries.map(e => e.artist))].sort();
+
+      // controls
+      const controls = el("div", "list-controls");
+      controls.innerHTML = `
+        <div class="filter-group">
+          <label>Artist</label>
+          <select id="filter-artist">
+            <option value="all">All artists</option>
+            ${artists.map(a => `<option value="${a}" ${filterArtist===a?"selected":""}>${a}</option>`).join("")}
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Sort</label>
+          <select id="sort-by">
+            <option value="date-desc" ${sortBy==="date-desc"?"selected":""}>Newest first</option>
+            <option value="date-asc"  ${sortBy==="date-asc" ?"selected":""}>Oldest first</option>
+            <option value="artist"    ${sortBy==="artist"   ?"selected":""}>Artist A–Z</option>
+            <option value="song"      ${sortBy==="song"     ?"selected":""}>Song A–Z</option>
+          </select>
+        </div>`;
+      wrap.appendChild(controls);
+
+      controls.querySelector("#filter-artist").onchange = e => { filterArtist = e.target.value; renderApp(); };
+      controls.querySelector("#sort-by").onchange       = e => { sortBy = e.target.value; renderApp(); };
+
+      // filter + sort
+      let display = entries.filter(e => filterArtist === "all" || e.artist === filterArtist);
+      display = display.sort((a, b) => {
+        if (sortBy === "date-asc")  return (a.createdAt?.seconds||0) - (b.createdAt?.seconds||0);
+        if (sortBy === "artist")    return a.artist.localeCompare(b.artist);
+        if (sortBy === "song")      return a.song.localeCompare(b.song);
+        return (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0);
+      });
+
+      if (display.length === 0) {
+        const empty = el("div", "empty-state");
+        empty.innerHTML = filterArtist !== "all"
+          ? `<p>No entries for ${filterArtist}.</p>`
+          : `<p>No entries yet. Write your first one.</p>`;
+        wrap.appendChild(empty);
+        return wrap;
+      }
+
+      const list = el("div", "entry-list");
+      display.forEach(entry => {
+        const card = el("div", "entry-card");
+        card.innerHTML = `
+          <div class="card-meta">${formatDate(entry.createdAt)}</div>
+          <div class="card-song">${entry.song}</div>
+          <div class="card-artist">${entry.artist}</div>
+          <div class="card-excerpt">${entry.body ? entry.body.substring(0, 140) + (entry.body.length > 140 ? "…" : "") : ""}</div>`;
+        card.onclick = () => showView("entry", entry.id);
+        list.appendChild(card);
+      });
+      wrap.appendChild(list);
+      return wrap;
+    }
+
+    // ── entry view ───────────────────────────────────────────────────────────
+    function buildEntry() {
+      const entry = entries.find(e => e.id === currentId);
+      if (!entry) { showView("list"); return el("div"); }
+
+      const wrap = el("div", "view-entry");
+
+      // back
+      const back = el("button", "btn-back");
+      back.textContent = "← All entries";
+      back.onclick = () => showView("list");
+      wrap.appendChild(back);
+
+      // header
+      const header = el("div", "entry-header");
+      header.innerHTML = `
+        <div class="entry-date">${formatDate(entry.createdAt)}</div>
+        <h1 class="entry-song">${entry.song}</h1>
+        <div class="entry-artist">${entry.artist}</div>
+        <div class="entry-rule"></div>`;
+      wrap.appendChild(header);
+
+      // body
+      if (entry.body) {
+        const body = el("div", "entry-body");
+        body.innerHTML = entry.body.split("\n").filter(Boolean).map(p => `<p>${p}</p>`).join("");
+        wrap.appendChild(body);
+      }
+
+      // YouTube
+      const ytId = youtubeId(entry.youtubeUrl);
+      if (ytId) {
+        const ytWrap = el("div", "media-block");
+        ytWrap.innerHTML = `
+          <div class="media-label">Watch / Listen</div>
+          <div class="yt-wrap">
+            <iframe src="https://www.youtube.com/embed/${ytId}" frameborder="0" allowfullscreen
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture">
+            </iframe>
+          </div>`;
+        wrap.appendChild(ytWrap);
+      }
+
+      // Spotify song
+      if (entry.spotifySong) {
+        const spWrap = el("div", "media-block");
+        const embedUrl = spotifyEmbed(entry.spotifySong);
+        spWrap.innerHTML = `
+          <div class="media-label">Stream on Spotify</div>
+          <iframe src="${embedUrl}" width="100%" height="152" frameborder="0"
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+            loading="lazy" style="border-radius:12px"></iframe>`;
+        wrap.appendChild(spWrap);
+      }
+
+      // Spotify playlist link
+      if (entry.spotifyPlaylist) {
+        const plWrap = el("div", "media-block");
+        plWrap.innerHTML = `
+          <div class="media-label">Full Playlist</div>
+          <a class="playlist-link" href="${entry.spotifyPlaylist}" target="_blank">
+            Open "Listening Notes" playlist on Spotify →
+          </a>`;
+        wrap.appendChild(plWrap);
+      }
+
+      // Lyrics
+      if (entry.lyrics) {
+        const lyricWrap = el("div", "lyrics-block");
+        lyricWrap.innerHTML = `
+          <div class="lyrics-toggle" id="lyrics-toggle">Show lyrics ↓</div>
+          <div class="lyrics-body" id="lyrics-body" style="display:none">
+            <pre>${entry.lyrics}</pre>
+          </div>`;
+        wrap.appendChild(lyricWrap);
+        lyricWrap.querySelector("#lyrics-toggle").onclick = function() {
+          const body = lyricWrap.querySelector("#lyrics-body");
+          const open = body.style.display === "none";
+          body.style.display = open ? "block" : "none";
+          this.textContent = open ? "Hide lyrics ↑" : "Show lyrics ↓";
+        };
+      }
+
+      // actions
+      const actions = el("div", "entry-actions");
+      const editBtn = el("button", "btn-edit");
+      editBtn.textContent = "Edit";
+      editBtn.onclick = () => { editingEntry = entry; showView("edit"); };
+      const delBtn = el("button", "btn-delete");
+      delBtn.textContent = "Delete";
+      delBtn.onclick = () => deleteEntry(entry.id);
+      actions.appendChild(editBtn);
+      actions.appendChild(delBtn);
+      wrap.appendChild(actions);
+
+      return wrap;
+    }
+
+    // ── form ─────────────────────────────────────────────────────────────────
+    function buildForm() {
+      const e = editingEntry || {};
+      const wrap = el("div", "view-form");
+
+      wrap.innerHTML = `
+        <div class="form-header">
+          <button class="btn-back" id="form-back">← Cancel</button>
+          <h2>${editingEntry ? "Edit entry" : "New entry"}</h2>
+        </div>
+
+        <div class="form-group">
+          <label>Song title <span class="req">*</span></label>
+          <input id="f-song" type="text" placeholder="Song name" value="${e.song||""}" />
+        </div>
+
+        <div class="form-group">
+          <label>Artist <span class="req">*</span></label>
+          <input id="f-artist" type="text" placeholder="Artist or band" value="${e.artist||""}" />
+        </div>
+
+        <div class="form-group">
+          <label>Your writing <span class="req">*</span></label>
+          <textarea id="f-body" rows="10" placeholder="Why does this song resonate with you?">${e.body||""}</textarea>
+        </div>
+
+        <div class="form-section-label">Links &amp; media</div>
+
+        <div class="form-group">
+          <label>YouTube URL or video ID</label>
+          <input id="f-yt" type="text" placeholder="https://www.youtube.com/watch?v=... or just the ID" value="${e.youtubeUrl||""}" />
+        </div>
+
+        <div class="form-group">
+          <label>Spotify song link</label>
+          <input id="f-sp-song" type="text" placeholder="https://open.spotify.com/track/..." value="${e.spotifySong||""}" />
+        </div>
+
+        <div class="form-group">
+          <label>Spotify playlist link</label>
+          <input id="f-sp-pl" type="text" placeholder="https://open.spotify.com/playlist/..." value="${e.spotifyPlaylist||""}" />
+          <div class="field-hint">Paste your "Listening Notes" playlist link here — same link every time.</div>
+        </div>
+
+        <div class="form-section-label">Lyrics <span class="form-optional">(optional)</span></div>
+
+        <div class="form-group">
+          <label>Paste lyrics</label>
+          <textarea id="f-lyrics" rows="8" placeholder="Paste lyrics here if you want them displayed.">${e.lyrics||""}</textarea>
+        </div>
+
+        <div class="form-error" id="form-error"></div>
+
+        <button class="btn-save" id="form-save">${editingEntry ? "Save changes" : "Publish entry"}</button>`;
+
+      wrap.querySelector("#form-back").onclick = () => { editingEntry = null; showView(currentId ? "entry" : "list", currentId); };
+
+      wrap.querySelector("#form-save").onclick = async () => {
+        const song   = wrap.querySelector("#f-song").value.trim();
+        const artist = wrap.querySelector("#f-artist").value.trim();
+        const body   = wrap.querySelector("#f-body").value.trim();
+        const errEl  = wrap.querySelector("#form-error");
+        errEl.textContent = "";
+
+        if (!song || !artist || !body) {
+          errEl.textContent = "Song, artist, and your writing are required.";
+          return;
+        }
+
+        const btn = wrap.querySelector("#form-save");
+        btn.textContent = "Saving…";
+        btn.disabled = true;
+
+        await saveEntry({
+          song,
+          artist,
+          body,
+          youtubeUrl:      wrap.querySelector("#f-yt").value.trim(),
+          spotifySong:     wrap.querySelector("#f-sp-song").value.trim(),
+          spotifyPlaylist: wrap.querySelector("#f-sp-pl").value.trim(),
+          lyrics:          wrap.querySelector("#f-lyrics").value.trim(),
+        });
+      };
+
+      return wrap;
+    }
+
+    // ── util ─────────────────────────────────────────────────────────────────
+    function el(tag, cls) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      return e;
+    }
+
+    // ── boot ─────────────────────────────────────────────────────────────────
+    window.addEventListener("DOMContentLoaded", () => {
+      renderApp();
+      loadEntries();
+    });
+  </script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── reset + tokens ───────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #111111;
+      --surface:   #1C1C1C;
+      --border:    #2A2A2A;
+      --text:      #F0EDE8;
+      --muted:     #888880;
+      --gold:      #C9A84C;
+      --gold-dim:  #7A6530;
+      --danger:    #C0392B;
+      --radius:    4px;
+      --max-w:     720px;
+    }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Inter", sans-serif;
+      font-weight: 300;
+      font-size: 17px;
+      line-height: 1.7;
+      min-height: 100vh;
+    }
+
+    #app { min-height: 100vh; }
+
+    /* ── nav ──────────────────────────────────────────────────────── */
+    nav {
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: rgba(17,17,17,0.95);
+      backdrop-filter: blur(8px);
+      z-index: 10;
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .nav-title {
+      font-family: "Playfair Display", serif;
+      font-size: 1.1rem;
+      letter-spacing: 0.04em;
+      color: var(--gold);
+      cursor: pointer;
+      user-select: none;
+    }
+    .btn-new {
+      background: transparent;
+      border: 1px solid var(--gold-dim);
+      color: var(--gold);
+      font-family: "Inter", sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      padding: 7px 16px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-new:hover { border-color: var(--gold); color: var(--text); }
+
+    /* ── shared ───────────────────────────────────────────────────── */
+    main { max-width: var(--max-w); margin: 0 auto; padding: 40px 24px 80px; }
+
+    .btn-back {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-family: "Inter", sans-serif;
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 0;
+      margin-bottom: 32px;
+      display: inline-block;
+      transition: color 0.15s;
+    }
+    .btn-back:hover { color: var(--text); }
+
+    /* ── list view ────────────────────────────────────────────────── */
+    .list-controls {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 36px;
+    }
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .filter-group label {
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .filter-group select {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: "Inter", sans-serif;
+      font-size: 0.85rem;
+      padding: 6px 10px;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+
+    .entry-list { display: flex; flex-direction: column; gap: 1px; }
+
+    .entry-card {
+      background: transparent;
+      border-bottom: 1px solid var(--border);
+      padding: 24px 0;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .entry-card:first-child { border-top: 1px solid var(--border); }
+    .entry-card:hover { background: var(--surface); padding-left: 12px; padding-right: 12px; margin: 0 -12px; }
+
+    .card-meta   { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 4px; }
+    .card-song   { font-family: "Playfair Display", serif; font-size: 1.35rem; font-weight: 700; color: var(--text); line-height: 1.2; }
+    .card-artist { font-size: 0.85rem; color: var(--gold); margin-top: 2px; margin-bottom: 10px; }
+    .card-excerpt { font-size: 0.88rem; color: var(--muted); line-height: 1.6; }
+
+    .empty-state { text-align: center; padding: 80px 0; color: var(--muted); }
+
+    /* ── entry view ───────────────────────────────────────────────── */
+    .entry-date   { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px; }
+    .entry-song   { font-family: "Playfair Display", serif; font-size: clamp(2rem, 6vw, 3.2rem); font-weight: 900; line-height: 1.05; color: var(--text); }
+    .entry-artist { font-size: 0.9rem; color: var(--gold); margin-top: 8px; letter-spacing: 0.03em; }
+    .entry-rule   { width: 48px; height: 2px; background: var(--gold); margin: 28px 0; }
+
+    .entry-body { margin-bottom: 48px; }
+    .entry-body p { margin-bottom: 1.2em; color: var(--text); font-size: 1.05rem; line-height: 1.8; }
+
+    .media-block { margin-bottom: 36px; }
+    .media-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .yt-wrap { position: relative; padding-bottom: 56.25%; height: 0; border-radius: var(--radius); overflow: hidden; }
+    .yt-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+    .playlist-link {
+      color: var(--gold);
+      font-size: 0.9rem;
+      text-decoration: none;
+      border-bottom: 1px solid var(--gold-dim);
+      padding-bottom: 1px;
+      transition: border-color 0.15s;
+    }
+    .playlist-link:hover { border-color: var(--gold); }
+
+    .lyrics-block { margin-bottom: 36px; }
+    .lyrics-toggle {
+      font-size: 0.8rem;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.15s;
+    }
+    .lyrics-toggle:hover { color: var(--text); }
+    .lyrics-body { margin-top: 20px; border-left: 2px solid var(--border); padding-left: 20px; }
+    .lyrics-body pre {
+      font-family: "Inter", sans-serif;
+      font-size: 0.88rem;
+      line-height: 1.9;
+      color: var(--muted);
+      white-space: pre-wrap;
+    }
+
+    .entry-actions { display: flex; gap: 12px; margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); }
+    .btn-edit, .btn-delete {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: "Inter", sans-serif;
+      font-size: 0.8rem;
+      padding: 7px 16px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-edit:hover   { border-color: var(--text); color: var(--text); }
+    .btn-delete:hover { border-color: var(--danger); color: var(--danger); }
+
+    /* ── form ─────────────────────────────────────────────────────── */
+    .form-header { display: flex; align-items: baseline; gap: 20px; margin-bottom: 36px; }
+    .form-header h2 { font-family: "Playfair Display", serif; font-size: 1.5rem; font-weight: 700; }
+    .form-header .btn-back { margin-bottom: 0; }
+
+    .form-group { margin-bottom: 24px; }
+    .form-group label {
+      display: block;
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .req { color: var(--gold); }
+    .form-group input, .form-group textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: "Inter", sans-serif;
+      font-size: 0.95rem;
+      font-weight: 300;
+      padding: 12px 14px;
+      border-radius: var(--radius);
+      outline: none;
+      resize: vertical;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus, .form-group textarea:focus { border-color: var(--gold-dim); }
+    .form-group input::placeholder, .form-group textarea::placeholder { color: #444; }
+
+    .field-hint { font-size: 0.75rem; color: var(--muted); margin-top: 6px; }
+
+    .form-section-label {
+      font-size: 0.7rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--gold-dim);
+      border-top: 1px solid var(--border);
+      padding-top: 24px;
+      margin-bottom: 20px;
+      margin-top: 8px;
+    }
+    .form-optional { color: var(--muted); font-size: 0.65rem; }
+
+    .form-error { color: #e06c6c; font-size: 0.85rem; margin-bottom: 16px; min-height: 1em; }
+
+    .btn-save {
+      background: var(--gold);
+      border: none;
+      color: #111;
+      font-family: "Inter", sans-serif;
+      font-size: 0.9rem;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      padding: 14px 32px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn-save:hover   { opacity: 0.85; }
+    .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── responsive ───────────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      main { padding: 24px 16px 60px; }
+      .nav-inner { padding: 14px 16px; }
+      .list-controls { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div style="max-width:720px;margin:80px auto;padding:0 24px;color:#888;font-family:Inter,sans-serif;font-size:0.9rem;">
+      Loading…
+    </div>
+  </div>
+</body>
+</html>
