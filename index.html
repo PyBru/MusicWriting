@@ -89,6 +89,8 @@
     let currentView  = "list";
     let currentId    = null;
     let filterArtist = "all";
+    let filterAlbum  = "all";
+    let filterDecade = "all";
     let sortBy       = "date-desc";
     let editingEntry = null;
 
@@ -219,6 +221,8 @@
     function buildList() {
       const wrap = el("div", "view-list");
       const artists = [...new Set(entries.map(e => e.artist))].sort();
+      const albums  = [...new Set(entries.map(e => e.album).filter(Boolean))].sort();
+      const decades = [...new Set(entries.map(e => e.releaseYear ? Math.floor(e.releaseYear / 10) * 10 : null).filter(Boolean))].sort();
 
       const controls = el("div", "list-controls");
       controls.innerHTML = `
@@ -230,31 +234,54 @@
           </select>
         </div>
         <div class="filter-group">
+          <label>Album</label>
+          <select id="filter-album">
+            <option value="all">All albums</option>
+            ${albums.map(a => `<option value="${a}" ${filterAlbum===a?"selected":""}>${a}</option>`).join("")}
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Decade</label>
+          <select id="filter-decade">
+            <option value="all">All decades</option>
+            ${decades.map(d => `<option value="${d}" ${filterDecade==d?"selected":""}>${d}s</option>`).join("")}
+          </select>
+        </div>
+        <div class="filter-group">
           <label>Sort</label>
           <select id="sort-by">
             <option value="date-desc" ${sortBy==="date-desc"?"selected":""}>Newest first</option>
             <option value="date-asc"  ${sortBy==="date-asc" ?"selected":""}>Oldest first</option>
             <option value="artist"    ${sortBy==="artist"   ?"selected":""}>Artist A–Z</option>
             <option value="song"      ${sortBy==="song"     ?"selected":""}>Song A–Z</option>
+            <option value="year-desc" ${sortBy==="year-desc"?"selected":""}>Release year ↓</option>
+            <option value="year-asc"  ${sortBy==="year-asc" ?"selected":""}>Release year ↑</option>
           </select>
         </div>`;
       wrap.appendChild(controls);
       controls.querySelector("#filter-artist").onchange = e => { filterArtist = e.target.value; renderApp(); };
+      controls.querySelector("#filter-album").onchange  = e => { filterAlbum  = e.target.value; renderApp(); };
+      controls.querySelector("#filter-decade").onchange = e => { filterDecade = e.target.value; renderApp(); };
       controls.querySelector("#sort-by").onchange       = e => { sortBy = e.target.value; renderApp(); };
 
-      let display = entries.filter(e => filterArtist === "all" || e.artist === filterArtist);
+      let display = entries.filter(e => {
+        const decade = e.releaseYear ? Math.floor(e.releaseYear / 10) * 10 : null;
+        return (filterArtist === "all" || e.artist === filterArtist)
+            && (filterAlbum  === "all" || e.album  === filterAlbum)
+            && (filterDecade === "all" || decade == filterDecade);
+      });
       display = display.sort((a, b) => {
         if (sortBy === "date-asc")  return (a.createdAt?.seconds||0) - (b.createdAt?.seconds||0);
         if (sortBy === "artist")    return a.artist.localeCompare(b.artist);
         if (sortBy === "song")      return a.song.localeCompare(b.song);
+        if (sortBy === "year-desc") return (b.releaseYear||0) - (a.releaseYear||0);
+        if (sortBy === "year-asc")  return (a.releaseYear||0) - (b.releaseYear||0);
         return (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0);
       });
 
       if (display.length === 0) {
         const empty = el("div", "empty-state");
-        empty.innerHTML = filterArtist !== "all"
-          ? `<p>No entries for ${filterArtist}.</p>`
-          : `<p>No entries yet.</p>`;
+        empty.innerHTML = `<p>No entries match the current filters.</p>`;
         wrap.appendChild(empty);
         return wrap;
       }
@@ -262,10 +289,11 @@
       const list = el("div", "entry-list");
       display.forEach(entry => {
         const card = el("div", "entry-card");
+        const albumLine = [entry.album, entry.releaseYear].filter(Boolean).join(" · ");
         card.innerHTML = `
           <div class="card-meta">${formatDate(entry.createdAt)}</div>
           <div class="card-song">${entry.song}</div>
-          <div class="card-artist">${entry.artist}</div>
+          <div class="card-artist">${entry.artist}${albumLine ? `<span class="card-album"> — ${albumLine}</span>` : ""}</div>
           <div class="card-excerpt">${entry.body ? entry.body.substring(0, 140) + (entry.body.length > 140 ? "…" : "") : ""}</div>`;
         card.onclick = () => showView("entry", entry.id);
         list.appendChild(card);
@@ -287,10 +315,12 @@
       wrap.appendChild(back);
 
       const header = el("div", "entry-header");
+      const albumLine = [entry.album, entry.releaseYear].filter(Boolean).join(", ");
       header.innerHTML = `
         <div class="entry-date">${formatDate(entry.createdAt)}</div>
         <h1 class="entry-song">${entry.song}</h1>
         <div class="entry-artist">${entry.artist}</div>
+        ${albumLine ? `<div class="entry-album">${albumLine}</div>` : ""}
         <div class="entry-rule"></div>`;
       wrap.appendChild(header);
 
@@ -382,6 +412,14 @@
           <input id="f-artist" type="text" placeholder="Artist or band" value="${e.artist||""}" />
         </div>
         <div class="form-group">
+          <label>Album</label>
+          <input id="f-album" type="text" placeholder="Album name" value="${e.album||""}" />
+        </div>
+        <div class="form-group">
+          <label>Release year</label>
+          <input id="f-year" type="number" placeholder="e.g. 1994" min="1900" max="2099" value="${e.releaseYear||""}" />
+        </div>
+        <div class="form-group">
           <label>Your writing <span class="req">*</span></label>
           <textarea id="f-body" rows="10" placeholder="Why does this song resonate with you?">${e.body||""}</textarea>
         </div>
@@ -419,6 +457,8 @@
         btn.textContent = "Saving…"; btn.disabled = true;
         await saveEntry({
           song, artist, body,
+          album:           wrap.querySelector("#f-album").value.trim(),
+          releaseYear:     wrap.querySelector("#f-year").value ? parseInt(wrap.querySelector("#f-year").value) : null,
           youtubeUrl:      wrap.querySelector("#f-yt").value.trim(),
           spotifySong:     wrap.querySelector("#f-sp-song").value.trim(),
           spotifyPlaylist: wrap.querySelector("#f-sp-pl").value.trim(),
@@ -573,6 +613,7 @@
     .card-meta    { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 4px; }
     .card-song    { font-family: "Playfair Display", serif; font-size: 1.35rem; font-weight: 700; line-height: 1.2; }
     .card-artist  { font-size: 0.85rem; color: var(--gold); margin-top: 2px; margin-bottom: 10px; }
+    .card-album   { color: var(--muted); font-size: 0.8rem; }
     .card-excerpt { font-size: 0.88rem; color: var(--muted); line-height: 1.6; }
     .empty-state  { text-align: center; padding: 80px 0; color: var(--muted); }
 
@@ -580,6 +621,7 @@
     .entry-date   { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px; }
     .entry-song   { font-family: "Playfair Display", serif; font-size: clamp(2rem, 6vw, 3.2rem); font-weight: 900; line-height: 1.05; }
     .entry-artist { font-size: 0.9rem; color: var(--gold); margin-top: 8px; letter-spacing: 0.03em; }
+    .entry-album  { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
     .entry-rule   { width: 48px; height: 2px; background: var(--gold); margin: 28px 0; }
     .entry-body   { margin-bottom: 48px; }
     .entry-body p { margin-bottom: 1.2em; font-size: 1.05rem; line-height: 1.8; }
