@@ -14,21 +14,57 @@
     } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     // ── PASTE YOUR FIREBASE CONFIG HERE ──────────────────────────────────────
-  // Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyC_jW1CCTzE3fQROJqdDlsps1IbUMX8b2Y",
-  authDomain: "musicwriting-e38ba.firebaseapp.com",
-  projectId: "musicwriting-e38ba",
-  storageBucket: "musicwriting-e38ba.firebasestorage.app",
-  messagingSenderId: "162629936781",
-  appId: "1:162629936781:web:1e6aa6c1303b1ed332a4c4",
-  measurementId: "G-RJ8T2RV00P"
-};
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // ── PASSWORD SETUP ────────────────────────────────────────────────────────
+    // To change your password:
+    //   1. Open your browser console (F12)
+    //   2. Type: await hashPassword("yournewpassword")
+    //   3. Copy the result and replace the hash below
+    const PASSWORD_HASH = "1cb3e8e0f3e4e9becb4f8a9fb9a7a5a3d0b59bd80abc7cc0230b1470d68488f8";
+    //                     ↑ default password is: listeningnotes
     // ─────────────────────────────────────────────────────────────────────────
 
     const app = initializeApp(firebaseConfig);
     const db  = getFirestore(app);
+
+    // ── auth state ───────────────────────────────────────────────────────────
+    let isAuthed = false;
+
+    async function hashPassword(pw) {
+      const buf  = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pw));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
+    }
+    // Expose helper so user can generate hashes from console
+    window.hashPassword = hashPassword;
+
+    async function tryLogin(pw) {
+      const hash = await hashPassword(pw);
+      if (hash === PASSWORD_HASH) {
+        isAuthed = true;
+        sessionStorage.setItem("ln_auth", "1");
+        renderApp();
+        return true;
+      }
+      return false;
+    }
+
+    function logout() {
+      isAuthed = false;
+      sessionStorage.removeItem("ln_auth");
+      showView("list");
+    }
+
+    // Persist auth for the browser session (closes when tab closes)
+    if (sessionStorage.getItem("ln_auth") === "1") isAuthed = true;
 
     // ── helpers ──────────────────────────────────────────────────────────────
     function youtubeId(url) {
@@ -39,7 +75,6 @@ const firebaseConfig = {
 
     function spotifyEmbed(url) {
       if (!url) return null;
-      // Convert open.spotify.com link to embed link
       return url.replace("open.spotify.com/", "open.spotify.com/embed/");
     }
 
@@ -50,9 +85,9 @@ const firebaseConfig = {
     }
 
     // ── state ────────────────────────────────────────────────────────────────
-    let entries     = [];
-    let currentView = "list"; // "list" | "entry" | "new" | "edit"
-    let currentId   = null;
+    let entries      = [];
+    let currentView  = "list";
+    let currentId    = null;
     let filterArtist = "all";
     let sortBy       = "date-desc";
     let editingEntry = null;
@@ -65,8 +100,9 @@ const firebaseConfig = {
       renderApp();
     }
 
-    // ── save entry ───────────────────────────────────────────────────────────
+    // ── save / delete ─────────────────────────────────────────────────────────
     async function saveEntry(data) {
+      if (!isAuthed) return;
       if (editingEntry) {
         await updateDoc(doc(db, "entries", editingEntry.id), { ...data, updatedAt: serverTimestamp() });
       } else {
@@ -78,6 +114,7 @@ const firebaseConfig = {
     }
 
     async function deleteEntry(id) {
+      if (!isAuthed) return;
       if (!confirm("Delete this entry?")) return;
       await deleteDoc(doc(db, "entries", id));
       await loadEntries();
@@ -95,16 +132,16 @@ const firebaseConfig = {
     function renderApp() {
       const root = document.getElementById("app");
       root.innerHTML = "";
-
-      const nav = buildNav();
-      root.appendChild(nav);
-
+      root.appendChild(buildNav());
       const main = document.createElement("main");
       root.appendChild(main);
-
       if (currentView === "list")  main.appendChild(buildList());
       if (currentView === "entry") main.appendChild(buildEntry());
-      if (currentView === "new" || currentView === "edit") main.appendChild(buildForm());
+      if (currentView === "new" || currentView === "edit") {
+        if (isAuthed) main.appendChild(buildForm());
+        else showView("list");
+      }
+      if (currentView === "login") main.appendChild(buildLogin());
     }
 
     // ── nav ──────────────────────────────────────────────────────────────────
@@ -113,21 +150,76 @@ const firebaseConfig = {
       nav.innerHTML = `
         <div class="nav-inner">
           <span class="nav-title" id="nav-home">Listening Notes</span>
-          <button class="btn-new" id="nav-new">+ New Entry</button>
+          <div class="nav-right">
+            ${isAuthed
+              ? `<button class="btn-new" id="nav-new">+ New Entry</button>
+                 <button class="btn-lock" id="nav-lock" title="Lock">
+                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                     <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                   </svg>
+                 </button>`
+              : `<button class="btn-lock" id="nav-lock" title="Sign in">
+                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                     <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+                   </svg>
+                 </button>`
+            }
+          </div>
         </div>`;
       nav.querySelector("#nav-home").onclick = () => showView("list");
-      nav.querySelector("#nav-new").onclick  = () => { editingEntry = null; showView("new"); };
+      if (isAuthed) {
+        nav.querySelector("#nav-new").onclick  = () => { editingEntry = null; showView("new"); };
+        nav.querySelector("#nav-lock").onclick = logout;
+      } else {
+        nav.querySelector("#nav-lock").onclick = () => showView("login");
+      }
       return nav;
+    }
+
+    // ── login view ────────────────────────────────────────────────────────────
+    function buildLogin() {
+      const wrap = el("div", "view-login");
+      wrap.innerHTML = `
+        <div class="login-box">
+          <div class="login-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          <input id="pw-input" type="password" placeholder="Password" autocomplete="current-password" />
+          <div class="login-error" id="login-error"></div>
+          <button class="btn-save" id="pw-submit">Unlock</button>
+        </div>`;
+
+      const input = wrap.querySelector("#pw-input");
+      const errEl = wrap.querySelector("#login-error");
+      const btn   = wrap.querySelector("#pw-submit");
+
+      const attempt = async () => {
+        errEl.textContent = "";
+        btn.textContent = "Checking…";
+        btn.disabled = true;
+        const ok = await tryLogin(input.value);
+        if (!ok) {
+          errEl.textContent = "Incorrect password.";
+          btn.textContent = "Unlock";
+          btn.disabled = false;
+          input.value = "";
+          input.focus();
+        }
+      };
+
+      btn.onclick = attempt;
+      input.onkeydown = e => { if (e.key === "Enter") attempt(); };
+      setTimeout(() => input.focus(), 50);
+      return wrap;
     }
 
     // ── list view ────────────────────────────────────────────────────────────
     function buildList() {
       const wrap = el("div", "view-list");
-
-      // artists for filter
       const artists = [...new Set(entries.map(e => e.artist))].sort();
 
-      // controls
       const controls = el("div", "list-controls");
       controls.innerHTML = `
         <div class="filter-group">
@@ -147,11 +239,9 @@ const firebaseConfig = {
           </select>
         </div>`;
       wrap.appendChild(controls);
-
       controls.querySelector("#filter-artist").onchange = e => { filterArtist = e.target.value; renderApp(); };
       controls.querySelector("#sort-by").onchange       = e => { sortBy = e.target.value; renderApp(); };
 
-      // filter + sort
       let display = entries.filter(e => filterArtist === "all" || e.artist === filterArtist);
       display = display.sort((a, b) => {
         if (sortBy === "date-asc")  return (a.createdAt?.seconds||0) - (b.createdAt?.seconds||0);
@@ -164,7 +254,7 @@ const firebaseConfig = {
         const empty = el("div", "empty-state");
         empty.innerHTML = filterArtist !== "all"
           ? `<p>No entries for ${filterArtist}.</p>`
-          : `<p>No entries yet. Write your first one.</p>`;
+          : `<p>No entries yet.</p>`;
         wrap.appendChild(empty);
         return wrap;
       }
@@ -191,13 +281,11 @@ const firebaseConfig = {
 
       const wrap = el("div", "view-entry");
 
-      // back
       const back = el("button", "btn-back");
       back.textContent = "← All entries";
       back.onclick = () => showView("list");
       wrap.appendChild(back);
 
-      // header
       const header = el("div", "entry-header");
       header.innerHTML = `
         <div class="entry-date">${formatDate(entry.createdAt)}</div>
@@ -206,14 +294,12 @@ const firebaseConfig = {
         <div class="entry-rule"></div>`;
       wrap.appendChild(header);
 
-      // body
       if (entry.body) {
         const body = el("div", "entry-body");
         body.innerHTML = entry.body.split("\n").filter(Boolean).map(p => `<p>${p}</p>`).join("");
         wrap.appendChild(body);
       }
 
-      // YouTube
       const ytId = youtubeId(entry.youtubeUrl);
       if (ytId) {
         const ytWrap = el("div", "media-block");
@@ -227,19 +313,16 @@ const firebaseConfig = {
         wrap.appendChild(ytWrap);
       }
 
-      // Spotify song
       if (entry.spotifySong) {
         const spWrap = el("div", "media-block");
-        const embedUrl = spotifyEmbed(entry.spotifySong);
         spWrap.innerHTML = `
           <div class="media-label">Stream on Spotify</div>
-          <iframe src="${embedUrl}" width="100%" height="152" frameborder="0"
+          <iframe src="${spotifyEmbed(entry.spotifySong)}" width="100%" height="152" frameborder="0"
             allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
             loading="lazy" style="border-radius:12px"></iframe>`;
         wrap.appendChild(spWrap);
       }
 
-      // Spotify playlist link
       if (entry.spotifyPlaylist) {
         const plWrap = el("div", "media-block");
         plWrap.innerHTML = `
@@ -250,122 +333,98 @@ const firebaseConfig = {
         wrap.appendChild(plWrap);
       }
 
-      // Lyrics
       if (entry.lyrics) {
         const lyricWrap = el("div", "lyrics-block");
         lyricWrap.innerHTML = `
           <div class="lyrics-toggle" id="lyrics-toggle">Show lyrics ↓</div>
-          <div class="lyrics-body" id="lyrics-body" style="display:none">
-            <pre>${entry.lyrics}</pre>
-          </div>`;
+          <div class="lyrics-body" id="lyrics-body" style="display:none"><pre>${entry.lyrics}</pre></div>`;
         wrap.appendChild(lyricWrap);
         lyricWrap.querySelector("#lyrics-toggle").onclick = function() {
-          const body = lyricWrap.querySelector("#lyrics-body");
-          const open = body.style.display === "none";
-          body.style.display = open ? "block" : "none";
+          const b = lyricWrap.querySelector("#lyrics-body");
+          const open = b.style.display === "none";
+          b.style.display = open ? "block" : "none";
           this.textContent = open ? "Hide lyrics ↑" : "Show lyrics ↓";
         };
       }
 
-      // actions
-      const actions = el("div", "entry-actions");
-      const editBtn = el("button", "btn-edit");
-      editBtn.textContent = "Edit";
-      editBtn.onclick = () => { editingEntry = entry; showView("edit"); };
-      const delBtn = el("button", "btn-delete");
-      delBtn.textContent = "Delete";
-      delBtn.onclick = () => deleteEntry(entry.id);
-      actions.appendChild(editBtn);
-      actions.appendChild(delBtn);
-      wrap.appendChild(actions);
+      // edit / delete only visible when authed
+      if (isAuthed) {
+        const actions = el("div", "entry-actions");
+        const editBtn = el("button", "btn-edit");
+        editBtn.textContent = "Edit";
+        editBtn.onclick = () => { editingEntry = entry; showView("edit"); };
+        const delBtn = el("button", "btn-delete");
+        delBtn.textContent = "Delete";
+        delBtn.onclick = () => deleteEntry(entry.id);
+        actions.appendChild(editBtn);
+        actions.appendChild(delBtn);
+        wrap.appendChild(actions);
+      }
 
       return wrap;
     }
 
-    // ── form ─────────────────────────────────────────────────────────────────
+    // ── form (authed only) ───────────────────────────────────────────────────
     function buildForm() {
       const e = editingEntry || {};
       const wrap = el("div", "view-form");
-
       wrap.innerHTML = `
         <div class="form-header">
           <button class="btn-back" id="form-back">← Cancel</button>
           <h2>${editingEntry ? "Edit entry" : "New entry"}</h2>
         </div>
-
         <div class="form-group">
           <label>Song title <span class="req">*</span></label>
           <input id="f-song" type="text" placeholder="Song name" value="${e.song||""}" />
         </div>
-
         <div class="form-group">
           <label>Artist <span class="req">*</span></label>
           <input id="f-artist" type="text" placeholder="Artist or band" value="${e.artist||""}" />
         </div>
-
         <div class="form-group">
           <label>Your writing <span class="req">*</span></label>
           <textarea id="f-body" rows="10" placeholder="Why does this song resonate with you?">${e.body||""}</textarea>
         </div>
-
         <div class="form-section-label">Links &amp; media</div>
-
         <div class="form-group">
           <label>YouTube URL or video ID</label>
           <input id="f-yt" type="text" placeholder="https://www.youtube.com/watch?v=... or just the ID" value="${e.youtubeUrl||""}" />
         </div>
-
         <div class="form-group">
           <label>Spotify song link</label>
           <input id="f-sp-song" type="text" placeholder="https://open.spotify.com/track/..." value="${e.spotifySong||""}" />
         </div>
-
         <div class="form-group">
           <label>Spotify playlist link</label>
           <input id="f-sp-pl" type="text" placeholder="https://open.spotify.com/playlist/..." value="${e.spotifyPlaylist||""}" />
           <div class="field-hint">Paste your "Listening Notes" playlist link here — same link every time.</div>
         </div>
-
         <div class="form-section-label">Lyrics <span class="form-optional">(optional)</span></div>
-
         <div class="form-group">
           <label>Paste lyrics</label>
           <textarea id="f-lyrics" rows="8" placeholder="Paste lyrics here if you want them displayed.">${e.lyrics||""}</textarea>
         </div>
-
         <div class="form-error" id="form-error"></div>
-
         <button class="btn-save" id="form-save">${editingEntry ? "Save changes" : "Publish entry"}</button>`;
 
       wrap.querySelector("#form-back").onclick = () => { editingEntry = null; showView(currentId ? "entry" : "list", currentId); };
-
       wrap.querySelector("#form-save").onclick = async () => {
         const song   = wrap.querySelector("#f-song").value.trim();
         const artist = wrap.querySelector("#f-artist").value.trim();
         const body   = wrap.querySelector("#f-body").value.trim();
         const errEl  = wrap.querySelector("#form-error");
         errEl.textContent = "";
-
-        if (!song || !artist || !body) {
-          errEl.textContent = "Song, artist, and your writing are required.";
-          return;
-        }
-
+        if (!song || !artist || !body) { errEl.textContent = "Song, artist, and your writing are required."; return; }
         const btn = wrap.querySelector("#form-save");
-        btn.textContent = "Saving…";
-        btn.disabled = true;
-
+        btn.textContent = "Saving…"; btn.disabled = true;
         await saveEntry({
-          song,
-          artist,
-          body,
+          song, artist, body,
           youtubeUrl:      wrap.querySelector("#f-yt").value.trim(),
           spotifySong:     wrap.querySelector("#f-sp-song").value.trim(),
           spotifyPlaylist: wrap.querySelector("#f-sp-pl").value.trim(),
           lyrics:          wrap.querySelector("#f-lyrics").value.trim(),
         });
       };
-
       return wrap;
     }
 
@@ -383,13 +442,11 @@ const firebaseConfig = {
     });
   </script>
 
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" />
 
   <style>
-    /* ── reset + tokens ───────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
@@ -417,239 +474,178 @@ const firebaseConfig = {
 
     #app { min-height: 100vh; }
 
-    /* ── nav ──────────────────────────────────────────────────────── */
+    /* ── nav ── */
     nav {
       border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
+      position: sticky; top: 0;
       background: rgba(17,17,17,0.95);
       backdrop-filter: blur(8px);
       z-index: 10;
     }
     .nav-inner {
-      max-width: var(--max-w);
-      margin: 0 auto;
+      max-width: var(--max-w); margin: 0 auto;
       padding: 16px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      display: flex; align-items: center; justify-content: space-between;
     }
     .nav-title {
       font-family: "Playfair Display", serif;
-      font-size: 1.1rem;
-      letter-spacing: 0.04em;
-      color: var(--gold);
-      cursor: pointer;
-      user-select: none;
+      font-size: 1.1rem; letter-spacing: 0.04em;
+      color: var(--gold); cursor: pointer; user-select: none;
     }
+    .nav-right { display: flex; align-items: center; gap: 12px; }
+
     .btn-new {
       background: transparent;
       border: 1px solid var(--gold-dim);
       color: var(--gold);
       font-family: "Inter", sans-serif;
-      font-size: 0.8rem;
-      font-weight: 500;
-      letter-spacing: 0.06em;
-      padding: 7px 16px;
-      border-radius: var(--radius);
-      cursor: pointer;
-      transition: border-color 0.15s, color 0.15s;
+      font-size: 0.8rem; font-weight: 500; letter-spacing: 0.06em;
+      padding: 7px 16px; border-radius: var(--radius);
+      cursor: pointer; transition: border-color 0.15s, color 0.15s;
     }
     .btn-new:hover { border-color: var(--gold); color: var(--text); }
 
-    /* ── shared ───────────────────────────────────────────────────── */
+    .btn-lock {
+      background: none; border: none;
+      color: var(--border);
+      cursor: pointer; padding: 4px;
+      display: flex; align-items: center;
+      transition: color 0.2s;
+      border-radius: 50%;
+    }
+    .btn-lock:hover { color: var(--muted); }
+
+    /* ── shared ── */
     main { max-width: var(--max-w); margin: 0 auto; padding: 40px 24px 80px; }
 
     .btn-back {
-      background: none;
-      border: none;
-      color: var(--muted);
-      font-family: "Inter", sans-serif;
-      font-size: 0.85rem;
-      cursor: pointer;
-      padding: 0;
-      margin-bottom: 32px;
-      display: inline-block;
+      background: none; border: none;
+      color: var(--muted); font-family: "Inter", sans-serif;
+      font-size: 0.85rem; cursor: pointer;
+      padding: 0; margin-bottom: 32px; display: inline-block;
       transition: color 0.15s;
     }
     .btn-back:hover { color: var(--text); }
 
-    /* ── list view ────────────────────────────────────────────────── */
-    .list-controls {
-      display: flex;
-      gap: 20px;
-      margin-bottom: 36px;
+    /* ── login ── */
+    .view-login {
+      display: flex; justify-content: center;
+      padding-top: 80px;
     }
-    .filter-group {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
+    .login-box {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 16px; width: 100%; max-width: 320px;
     }
-    .filter-group label {
-      font-size: 0.7rem;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-    .filter-group select {
+    .login-icon { color: var(--muted); margin-bottom: 4px; }
+    .login-box input {
+      width: 100%;
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text);
-      font-family: "Inter", sans-serif;
-      font-size: 0.85rem;
-      padding: 6px 10px;
-      border-radius: var(--radius);
-      cursor: pointer;
+      font-family: "Inter", sans-serif; font-size: 0.95rem; font-weight: 300;
+      padding: 12px 14px; border-radius: var(--radius);
+      outline: none; text-align: center; letter-spacing: 0.1em;
+      transition: border-color 0.15s;
     }
+    .login-box input:focus { border-color: var(--gold-dim); }
+    .login-error { color: #e06c6c; font-size: 0.8rem; min-height: 1em; }
 
+    /* ── list ── */
+    .list-controls { display: flex; gap: 20px; margin-bottom: 36px; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .filter-group label {
+      font-size: 0.7rem; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .filter-group select {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); font-family: "Inter", sans-serif;
+      font-size: 0.85rem; padding: 6px 10px;
+      border-radius: var(--radius); cursor: pointer;
+    }
     .entry-list { display: flex; flex-direction: column; gap: 1px; }
-
     .entry-card {
-      background: transparent;
-      border-bottom: 1px solid var(--border);
-      padding: 24px 0;
-      cursor: pointer;
-      transition: background 0.1s;
+      background: transparent; border-bottom: 1px solid var(--border);
+      padding: 24px 0; cursor: pointer; transition: background 0.1s;
     }
     .entry-card:first-child { border-top: 1px solid var(--border); }
     .entry-card:hover { background: var(--surface); padding-left: 12px; padding-right: 12px; margin: 0 -12px; }
-
-    .card-meta   { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 4px; }
-    .card-song   { font-family: "Playfair Display", serif; font-size: 1.35rem; font-weight: 700; color: var(--text); line-height: 1.2; }
-    .card-artist { font-size: 0.85rem; color: var(--gold); margin-top: 2px; margin-bottom: 10px; }
+    .card-meta    { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 4px; }
+    .card-song    { font-family: "Playfair Display", serif; font-size: 1.35rem; font-weight: 700; line-height: 1.2; }
+    .card-artist  { font-size: 0.85rem; color: var(--gold); margin-top: 2px; margin-bottom: 10px; }
     .card-excerpt { font-size: 0.88rem; color: var(--muted); line-height: 1.6; }
+    .empty-state  { text-align: center; padding: 80px 0; color: var(--muted); }
 
-    .empty-state { text-align: center; padding: 80px 0; color: var(--muted); }
-
-    /* ── entry view ───────────────────────────────────────────────── */
+    /* ── entry ── */
     .entry-date   { font-size: 0.75rem; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px; }
-    .entry-song   { font-family: "Playfair Display", serif; font-size: clamp(2rem, 6vw, 3.2rem); font-weight: 900; line-height: 1.05; color: var(--text); }
+    .entry-song   { font-family: "Playfair Display", serif; font-size: clamp(2rem, 6vw, 3.2rem); font-weight: 900; line-height: 1.05; }
     .entry-artist { font-size: 0.9rem; color: var(--gold); margin-top: 8px; letter-spacing: 0.03em; }
     .entry-rule   { width: 48px; height: 2px; background: var(--gold); margin: 28px 0; }
+    .entry-body   { margin-bottom: 48px; }
+    .entry-body p { margin-bottom: 1.2em; font-size: 1.05rem; line-height: 1.8; }
 
-    .entry-body { margin-bottom: 48px; }
-    .entry-body p { margin-bottom: 1.2em; color: var(--text); font-size: 1.05rem; line-height: 1.8; }
-
-    .media-block { margin-bottom: 36px; }
-    .media-label {
-      font-size: 0.7rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 12px;
-    }
-    .yt-wrap { position: relative; padding-bottom: 56.25%; height: 0; border-radius: var(--radius); overflow: hidden; }
+    .media-block  { margin-bottom: 36px; }
+    .media-label  { font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+    .yt-wrap      { position: relative; padding-bottom: 56.25%; height: 0; border-radius: var(--radius); overflow: hidden; }
     .yt-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
 
     .playlist-link {
-      color: var(--gold);
-      font-size: 0.9rem;
-      text-decoration: none;
-      border-bottom: 1px solid var(--gold-dim);
-      padding-bottom: 1px;
+      color: var(--gold); font-size: 0.9rem; text-decoration: none;
+      border-bottom: 1px solid var(--gold-dim); padding-bottom: 1px;
       transition: border-color 0.15s;
     }
     .playlist-link:hover { border-color: var(--gold); }
 
-    .lyrics-block { margin-bottom: 36px; }
-    .lyrics-toggle {
-      font-size: 0.8rem;
-      color: var(--muted);
-      letter-spacing: 0.06em;
-      cursor: pointer;
-      user-select: none;
-      transition: color 0.15s;
-    }
+    .lyrics-block   { margin-bottom: 36px; }
+    .lyrics-toggle  { font-size: 0.8rem; color: var(--muted); letter-spacing: 0.06em; cursor: pointer; user-select: none; transition: color 0.15s; }
     .lyrics-toggle:hover { color: var(--text); }
-    .lyrics-body { margin-top: 20px; border-left: 2px solid var(--border); padding-left: 20px; }
-    .lyrics-body pre {
-      font-family: "Inter", sans-serif;
-      font-size: 0.88rem;
-      line-height: 1.9;
-      color: var(--muted);
-      white-space: pre-wrap;
-    }
+    .lyrics-body    { margin-top: 20px; border-left: 2px solid var(--border); padding-left: 20px; }
+    .lyrics-body pre { font-family: "Inter", sans-serif; font-size: 0.88rem; line-height: 1.9; color: var(--muted); white-space: pre-wrap; }
 
-    .entry-actions { display: flex; gap: 12px; margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); }
+    .entry-actions  { display: flex; gap: 12px; margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); }
     .btn-edit, .btn-delete {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--muted);
-      font-family: "Inter", sans-serif;
-      font-size: 0.8rem;
-      padding: 7px 16px;
-      border-radius: var(--radius);
-      cursor: pointer;
+      background: none; border: 1px solid var(--border);
+      color: var(--muted); font-family: "Inter", sans-serif;
+      font-size: 0.8rem; padding: 7px 16px;
+      border-radius: var(--radius); cursor: pointer;
       transition: border-color 0.15s, color 0.15s;
     }
     .btn-edit:hover   { border-color: var(--text); color: var(--text); }
     .btn-delete:hover { border-color: var(--danger); color: var(--danger); }
 
-    /* ── form ─────────────────────────────────────────────────────── */
+    /* ── form ── */
     .form-header { display: flex; align-items: baseline; gap: 20px; margin-bottom: 36px; }
     .form-header h2 { font-family: "Playfair Display", serif; font-size: 1.5rem; font-weight: 700; }
     .form-header .btn-back { margin-bottom: 0; }
-
     .form-group { margin-bottom: 24px; }
-    .form-group label {
-      display: block;
-      font-size: 0.75rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 8px;
-    }
+    .form-group label { display: block; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
     .req { color: var(--gold); }
     .form-group input, .form-group textarea {
-      width: 100%;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      color: var(--text);
-      font-family: "Inter", sans-serif;
-      font-size: 0.95rem;
-      font-weight: 300;
-      padding: 12px 14px;
-      border-radius: var(--radius);
-      outline: none;
-      resize: vertical;
-      transition: border-color 0.15s;
+      width: 100%; background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); font-family: "Inter", sans-serif;
+      font-size: 0.95rem; font-weight: 300;
+      padding: 12px 14px; border-radius: var(--radius);
+      outline: none; resize: vertical; transition: border-color 0.15s;
     }
     .form-group input:focus, .form-group textarea:focus { border-color: var(--gold-dim); }
     .form-group input::placeholder, .form-group textarea::placeholder { color: #444; }
-
     .field-hint { font-size: 0.75rem; color: var(--muted); margin-top: 6px; }
-
     .form-section-label {
-      font-size: 0.7rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--gold-dim);
-      border-top: 1px solid var(--border);
-      padding-top: 24px;
-      margin-bottom: 20px;
-      margin-top: 8px;
+      font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--gold-dim); border-top: 1px solid var(--border);
+      padding-top: 24px; margin-bottom: 20px; margin-top: 8px;
     }
     .form-optional { color: var(--muted); font-size: 0.65rem; }
-
     .form-error { color: #e06c6c; font-size: 0.85rem; margin-bottom: 16px; min-height: 1em; }
-
     .btn-save {
-      background: var(--gold);
-      border: none;
-      color: #111;
-      font-family: "Inter", sans-serif;
-      font-size: 0.9rem;
-      font-weight: 500;
-      letter-spacing: 0.04em;
-      padding: 14px 32px;
-      border-radius: var(--radius);
-      cursor: pointer;
-      transition: opacity 0.15s;
+      background: var(--gold); border: none; color: #111;
+      font-family: "Inter", sans-serif; font-size: 0.9rem; font-weight: 500;
+      letter-spacing: 0.04em; padding: 14px 32px;
+      border-radius: var(--radius); cursor: pointer; transition: opacity 0.15s;
     }
-    .btn-save:hover   { opacity: 0.85; }
+    .btn-save:hover    { opacity: 0.85; }
     .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* ── responsive ───────────────────────────────────────────────── */
     @media (max-width: 600px) {
       main { padding: 24px 16px 60px; }
       .nav-inner { padding: 14px 16px; }
